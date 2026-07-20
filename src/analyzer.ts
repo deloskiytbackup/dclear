@@ -40,11 +40,12 @@ class ConcurrencyPool {
 
 const pool = new ConcurrencyPool(128);
 
-// Iteracyjny skaner z poprawnym wykrywaniem Windows Junction Points & Symlinków
+// Iteracyjny skaner z opcjonalnym pomijaniem node_modules dla błyskawicznego skanowania
 async function fastDirSize(
   dirPath: string,
   onProgress?: (fullPath: string, totalFiles: { count: number }) => void,
-  fileCounter: { count: number } = { count: 0 }
+  fileCounter: { count: number } = { count: 0 },
+  skipNodeModules: boolean = false
 ): Promise<number> {
   let totalSize = 0;
   const dirQueue: string[] = [dirPath];
@@ -73,8 +74,8 @@ async function fastDirSize(
 
         if (entry.isDirectory()) {
           if (entry.name === '$RECYCLE.BIN' || entry.name === 'System Volume Information') continue;
+          if (skipNodeModules && entry.name === 'node_modules') continue;
 
-          // Weryfikacja lstat zapobiega wpadaniu w Windows Junction Points i Symlinki
           tasks.push(
             pool.run(async () => {
               try {
@@ -132,7 +133,8 @@ async function fastDirSize(
 
 export async function scanDirectory(
   targetDir: string,
-  onProgress?: (fullPath: string, fileCount: number) => void
+  onProgress?: (fullPath: string, fileCount: number) => void,
+  skipNodeModules: boolean = false
 ): Promise<DiskItem[]> {
   let entries: fs.Dirent[];
   try {
@@ -149,7 +151,6 @@ export async function scanDirectory(
     if (onProgress) onProgress(fullPath, fileCounter.count);
 
     if (entry.isDirectory()) {
-      // Weryfikujemy czy sam zadeklarowany katalog główny nie jest symlinkiem/junction
       const stat = await fs.promises.lstat(fullPath).catch(() => null);
       if (stat?.isSymbolicLink()) {
         return { path: fullPath, name: entry.name, size: 0, isDir: false };
@@ -157,7 +158,7 @@ export async function scanDirectory(
 
       const size = await fastDirSize(fullPath, (curPath, counter) => {
         if (onProgress) onProgress(curPath, counter.count);
-      }, fileCounter);
+      }, fileCounter, skipNodeModules);
       return { path: fullPath, name: entry.name, size, isDir: true };
     } else {
       fileCounter.count++;
@@ -199,7 +200,7 @@ export async function findNodeModulesFolders(
       tasks.push(
         fastDirSize(fullPath, (p, counter) => {
           if (onProgress) onProgress(p, counter.count);
-        }, fileCounter).then(size => {
+        }, fileCounter, false).then(size => {
           found.push({ path: fullPath, name: fullPath, size, isDir: true });
         })
       );

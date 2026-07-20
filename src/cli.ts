@@ -4,9 +4,9 @@ import { scanDirectory, findNodeModulesFolders, findDuplicates } from './analyze
 import { formatBytes, colorizeSize, formatDuration, formatNumber } from './formatter.js';
 import { removeTarget } from './cleaner.js';
 
-const VERSION = '1.1.2';
+const VERSION = '1.3.0';
 
-async function handleScan(targetDir: string, limit: number = 20) {
+async function handleScan(targetDir: string, skipNodeModules: boolean = false, limit: number = 20) {
   const absoluteDir = path.resolve(targetDir);
   const startTime = Date.now();
 
@@ -37,7 +37,7 @@ async function handleScan(targetDir: string, limit: number = 20) {
   const items = await scanDirectory(absoluteDir, (fullPath, fileCount) => {
     currentPath = fullPath;
     currentFileCount = fileCount;
-  });
+  }, skipNodeModules);
 
   clearInterval(spinner);
   if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
@@ -255,6 +255,7 @@ Szybki menedżer dysku w Node.js — skanuj, analizuj duplikaty, czyść!
 
 \x1b[1mDostępne komendy:\x1b[0m
   scan [path]           Skanuje katalog i pokazuje TOP najcięższych plików/folderów
+  scan [path] --fast    Super-szybkie skanowanie bez zagłębiania się w node_modules (-s, --fast)
   clean-nm [path]       Wyszukuje wszystkie foldery node_modules
   clean-nm [path] --auto Automatycznie usuwa wszystkie znalezione foldery node_modules
   dup, duplicates [path] Wyszukuje zduplikowane pliki (>1MB) i wylicza marnowane miejsce
@@ -273,7 +274,9 @@ export async function main() {
   try {
     switch (command) {
       case 'scan':
-        await handleScan(args[1] || cwd);
+        const fast = args.includes('--fast') || args.includes('-s') || args.includes('--skip-nm');
+        const scanPath = args.find(a => !a.startsWith('-') && a !== 'scan') || cwd;
+        await handleScan(scanPath, fast);
         break;
       case 'clean-nm':
         const auto = args.includes('--auto') || args.includes('-a');
