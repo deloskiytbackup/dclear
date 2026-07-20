@@ -15,7 +15,6 @@ export interface DuplicateGroup {
   files: string[];
 }
 
-// Zwiększona pula dla maksymalnej przepustowości na dyskach SSD (128 równoległych wątków I/O)
 class ConcurrencyPool {
   private active = 0;
   private queue: (() => void)[] = [];
@@ -41,7 +40,7 @@ class ConcurrencyPool {
 
 const pool = new ConcurrencyPool(128);
 
-// Iteracyjny, ultra-szybki skaner rozmiaru folderu bez zbędnego narzutu pamięci V8
+// Iteracyjny skaner z poprawnym wykrywaniem Windows Junction Points & Symlinków
 async function fastDirSize(
   dirPath: string,
   onProgress?: (fullPath: string, totalFiles: { count: number }) => void,
@@ -51,7 +50,6 @@ async function fastDirSize(
   const dirQueue: string[] = [dirPath];
   const visited = new Set<string>();
 
-  // Równolegle przetwarzane katalogi
   const processNextDir = async (): Promise<number> => {
     let localSize = 0;
 
@@ -67,25 +65,34 @@ async function fastDirSize(
         continue;
       }
 
-      const fileTasks: Promise<number>[] = [];
+      const tasks: Promise<number>[] = [];
 
       for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
-        if (entry.isSymbolicLink()) continue;
-
         const fullPath = path.join(currentDir, entry.name);
 
         if (entry.isDirectory()) {
-          if (entry.name !== '$RECYCLE.BIN' && entry.name !== 'System Volume Information') {
-            dirQueue.push(fullPath);
-          }
-        } else {
+          if (entry.name === '$RECYCLE.BIN' || entry.name === 'System Volume Information') continue;
+
+          // Weryfikacja lstat zapobiega wpadaniu w Windows Junction Points i Symlinki
+          tasks.push(
+            pool.run(async () => {
+              try {
+                const stat = await fs.promises.lstat(fullPath);
+                if (!stat.isSymbolicLink()) {
+                  dirQueue.push(fullPath);
+                }
+              } catch {}
+              return 0;
+            })
+          );
+        } else if (entry.isFile()) {
           fileCounter.count++;
           if (onProgress && fileCounter.count % 500 === 0) {
             onProgress(fullPath, fileCounter);
           }
 
-          fileTasks.push(
+          tasks.push(
             pool.run(async () => {
               try {
                 const stat = await fs.promises.lstat(fullPath);
@@ -98,8 +105,8 @@ async function fastDirSize(
         }
       }
 
-      if (fileTasks.length > 0) {
-        const sizes = await Promise.all(fileTasks);
+      if (tasks.length > 0) {
+        const sizes = await Promise.all(tasks);
         for (let j = 0; j < sizes.length; j++) {
           localSize += sizes[j];
         }
@@ -109,7 +116,6 @@ async function fastDirSize(
     return localSize;
   };
 
-  // Uruchomienie 16 równoległych workerów pobierających katalogi z kolejki
   const workerCount = 16;
   const workers: Promise<number>[] = [];
   for (let w = 0; w < workerCount; w++) {
@@ -142,11 +148,13 @@ export async function scanDirectory(
 
     if (onProgress) onProgress(fullPath, fileCounter.count);
 
-    if (entry.isSymbolicLink()) {
-      return { path: fullPath, name: entry.name, size: 0, isDir: false };
-    }
-
     if (entry.isDirectory()) {
+      // Weryfikujemy czy sam zadeklarowany katalog główny nie jest symlinkiem/junction
+      const stat = await fs.promises.lstat(fullPath).catch(() => null);
+      if (stat?.isSymbolicLink()) {
+        return { path: fullPath, name: entry.name, size: 0, isDir: false };
+      }
+
       const size = await fastDirSize(fullPath, (curPath, counter) => {
         if (onProgress) onProgress(curPath, counter.count);
       }, fileCounter);
@@ -154,6 +162,9 @@ export async function scanDirectory(
     } else {
       fileCounter.count++;
       const stat = await fs.promises.lstat(fullPath).catch(() => null);
+      if (stat?.isSymbolicLink()) {
+        return { path: fullPath, name: entry.name, size: 0, isDir: false };
+      }
       return { path: fullPath, name: entry.name, size: stat?.size ?? 0, isDir: false };
     }
   });
@@ -178,8 +189,11 @@ export async function findNodeModulesFolders(
   const fileCounter = { count: 0 };
 
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    if (!entry.isDirectory()) continue;
     const fullPath = path.join(rootDir, entry.name);
+
+    const stat = await fs.promises.lstat(fullPath).catch(() => null);
+    if (stat?.isSymbolicLink()) continue;
 
     if (entry.name === 'node_modules') {
       tasks.push(
@@ -218,14 +232,22 @@ export async function findDuplicates(
     const tasks: Promise<void>[] = [];
 
     for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
       const fullPath = path.join(dir, entry.name);
 
       if (entry.isDirectory()) {
         if (entry.name !== 'node_modules' && entry.name !== '.git' && entry.name !== '$RECYCLE.BIN') {
-          tasks.push(collectFiles(fullPath));
+          tasks.push(
+            pool.run(async () => {
+              try {
+                const stat = await fs.promises.lstat(fullPath);
+                if (!stat.isSymbolicLink()) {
+                  await collectFiles(fullPath);
+                }
+              } catch {}
+            })
+          );
         }
-      } else {
+      } else if (entry.isFile()) {
         fileCount++;
         if (onProgress && fileCount % 100 === 0) onProgress(fullPath, fileCount);
 
