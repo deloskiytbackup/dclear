@@ -7,6 +7,7 @@ export interface DiskItem {
   name: string;
   size: number;
   isDir: boolean;
+  subItems?: DiskItem[];
 }
 
 export interface DuplicateGroup {
@@ -40,7 +41,6 @@ class ConcurrencyPool {
 
 const pool = new ConcurrencyPool(128);
 
-// Lista folderów tymczasowych / budowania do pomijania w trybie fast (-s)
 const HEAVY_BUILD_FOLDERS = new Set([
   'node_modules',
   '.git',
@@ -148,6 +148,40 @@ async function fastDirSize(
   }
 
   return totalSize;
+}
+
+export async function getTopSubItems(
+  dirPath: string,
+  limit: number = 2,
+  skipHeavyFolders: boolean = false
+): Promise<DiskItem[]> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const tasks = entries.map(async (entry): Promise<DiskItem | null> => {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) {
+      if (skipHeavyFolders && HEAVY_BUILD_FOLDERS.has(entry.name)) return null;
+      const stat = await fs.promises.lstat(fullPath).catch(() => null);
+      if (stat?.isSymbolicLink()) return null;
+
+      const size = await fastDirSize(fullPath, undefined, undefined, skipHeavyFolders);
+      return { path: fullPath, name: entry.name, size, isDir: true };
+    } else if (entry.isFile()) {
+      const stat = await fs.promises.lstat(fullPath).catch(() => null);
+      if (stat?.isSymbolicLink()) return null;
+      return { path: fullPath, name: entry.name, size: stat?.size ?? 0, isDir: false };
+    }
+    return null;
+  });
+
+  const results = await Promise.all(tasks);
+  const valid = results.filter((i): i is DiskItem => i !== null && i.size > 0);
+  return valid.sort((a, b) => b.size - a.size).slice(0, limit);
 }
 
 export async function scanDirectory(

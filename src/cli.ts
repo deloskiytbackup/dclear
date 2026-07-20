@@ -1,10 +1,10 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import { scanDirectory, findNodeModulesFolders, findDuplicates } from './analyzer.js';
+import { scanDirectory, findNodeModulesFolders, findDuplicates, getTopSubItems } from './analyzer.js';
 import { formatBytes, colorizeSize, formatDuration, formatNumber } from './formatter.js';
 import { removeTarget } from './cleaner.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 
 async function handleScan(targetDir: string, skipNodeModules: boolean = false, limit: number = 20) {
   const absoluteDir = path.resolve(targetDir);
@@ -65,6 +65,17 @@ async function handleScan(targetDir: string, skipNodeModules: boolean = false, l
     const typeStr = item.isDir ? '\x1b[34m[DIR]\x1b[0m ' : '\x1b[90m[FILE]\x1b[0m';
     const rank = `${i + 1}.`.padEnd(4);
     console.log(`   ${rank} ${coloredSize}  ${typeStr}  ${item.name}`);
+
+    if (item.isDir) {
+      const subItems = await getTopSubItems(item.path, 2, skipNodeModules);
+      if (subItems.length > 0) {
+        for (const sub of subItems) {
+          const subIcon = sub.isDir ? '📂' : '📄';
+          const subSizeStr = formatBytes(sub.size);
+          console.log(`         \x1b[90m└─ ${subIcon} ${sub.name} (${subSizeStr})\x1b[0m`);
+        }
+      }
+    }
   }
 
   console.log('\n   💡 Aby usunąć: \x1b[1mdclear rm <ścieżka>\x1b[0m');
