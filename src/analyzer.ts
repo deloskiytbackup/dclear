@@ -40,12 +40,31 @@ class ConcurrencyPool {
 
 const pool = new ConcurrencyPool(128);
 
-// Iteracyjny skaner z opcjonalnym pomijaniem node_modules dla błyskawicznego skanowania
+// Lista folderów tymczasowych / budowania do pomijania w trybie fast (-s)
+const HEAVY_BUILD_FOLDERS = new Set([
+  'node_modules',
+  '.git',
+  '.next',
+  '.gradle',
+  '.cache',
+  'dist',
+  'build',
+  'target',
+  'out',
+  'bin',
+  'obj',
+  '.turbo',
+  '.idea',
+  '.vscode',
+  '$RECYCLE.BIN',
+  'System Volume Information'
+]);
+
 async function fastDirSize(
   dirPath: string,
   onProgress?: (fullPath: string, totalFiles: { count: number }) => void,
   fileCounter: { count: number } = { count: 0 },
-  skipNodeModules: boolean = false
+  skipHeavyFolders: boolean = false
 ): Promise<number> {
   let totalSize = 0;
   const dirQueue: string[] = [dirPath];
@@ -74,7 +93,7 @@ async function fastDirSize(
 
         if (entry.isDirectory()) {
           if (entry.name === '$RECYCLE.BIN' || entry.name === 'System Volume Information') continue;
-          if (skipNodeModules && entry.name === 'node_modules') continue;
+          if (skipHeavyFolders && HEAVY_BUILD_FOLDERS.has(entry.name)) continue;
 
           tasks.push(
             pool.run(async () => {
@@ -134,7 +153,7 @@ async function fastDirSize(
 export async function scanDirectory(
   targetDir: string,
   onProgress?: (fullPath: string, fileCount: number) => void,
-  skipNodeModules: boolean = false
+  skipHeavyFolders: boolean = false
 ): Promise<DiskItem[]> {
   let entries: fs.Dirent[];
   try {
@@ -158,7 +177,7 @@ export async function scanDirectory(
 
       const size = await fastDirSize(fullPath, (curPath, counter) => {
         if (onProgress) onProgress(curPath, counter.count);
-      }, fileCounter, skipNodeModules);
+      }, fileCounter, skipHeavyFolders);
       return { path: fullPath, name: entry.name, size, isDir: true };
     } else {
       fileCounter.count++;
@@ -236,7 +255,7 @@ export async function findDuplicates(
       const fullPath = path.join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        if (entry.name !== 'node_modules' && entry.name !== '.git' && entry.name !== '$RECYCLE.BIN') {
+        if (!HEAVY_BUILD_FOLDERS.has(entry.name)) {
           tasks.push(
             pool.run(async () => {
               try {
