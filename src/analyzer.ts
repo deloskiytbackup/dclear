@@ -266,6 +266,54 @@ export async function findNodeModulesFolders(
   return found.sort((a, b) => b.size - a.size);
 }
 
+export async function findMatchingFolders(
+  rootDir: string,
+  queryName: string,
+  onProgress?: (path: string, fileCount: number) => void
+): Promise<DiskItem[]> {
+  const found: DiskItem[] = [];
+  const lowerQuery = queryName.toLowerCase();
+
+  const traverse = async (dir: string): Promise<void> => {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const tasks: Promise<void>[] = [];
+    const fileCounter = { count: 0 };
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = path.join(dir, entry.name);
+
+      const stat = await fs.promises.lstat(fullPath).catch(() => null);
+      if (stat?.isSymbolicLink()) continue;
+
+      if (entry.name.toLowerCase().includes(lowerQuery)) {
+        tasks.push(
+          fastDirSize(fullPath, (p, counter) => {
+            if (onProgress) onProgress(p, counter.count);
+          }, fileCounter, false).then(size => {
+            found.push({ path: fullPath, name: entry.name, size, isDir: true });
+          })
+        );
+      }
+
+      if (entry.name !== '$RECYCLE.BIN' && entry.name !== 'System Volume Information' && entry.name !== '.git') {
+        tasks.push(traverse(fullPath));
+      }
+    }
+
+    await Promise.all(tasks);
+  };
+
+  await traverse(rootDir);
+  return found.sort((a, b) => b.size - a.size);
+}
+
 export async function findDuplicates(
   rootDir: string,
   minSizeMB: number = 1,

@@ -1,10 +1,10 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import { scanDirectory, findNodeModulesFolders, findDuplicates, getTopSubItems } from './analyzer.js';
+import { scanDirectory, findNodeModulesFolders, findDuplicates, getTopSubItems, findMatchingFolders } from './analyzer.js';
 import { formatBytes, colorizeSize, formatDuration, formatNumber } from './formatter.js';
 import { removeTarget } from './cleaner.js';
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 
 async function handleScan(targetDir: string, skipNodeModules: boolean = false, limit: number = 20) {
   const absoluteDir = path.resolve(targetDir);
@@ -79,8 +79,76 @@ async function handleScan(targetDir: string, skipNodeModules: boolean = false, l
   }
 
   console.log('\n   💡 Aby usunąć: \x1b[1mdclear rm <ścieżka>\x1b[0m');
+  console.log(`   💡 Wyszukaj folder po nazwie: \x1b[1mdclear find <nazwa> [ścieżka]\x1b[0m`);
   console.log(`   💡 Szukaj node_modules: \x1b[1mdclear clean-nm [ścieżka]\x1b[0m`);
   console.log(`   💡 Szukaj duplikatów: \x1b[1mdclear dup [ścieżka]\x1b[0m\n`);
+}
+
+async function handleFindFolder(query: string, targetDir: string) {
+  if (!query) {
+    console.error('Błąd: Podaj nazwę lub frazę folderu do wyszukania (np. dclear find starmusic)');
+    process.exit(1);
+  }
+
+  const absoluteDir = path.resolve(targetDir);
+  const startTime = Date.now();
+
+  const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let frame = 0;
+  let currentPath = absoluteDir;
+  let currentFileCount = 0;
+
+  const spinner = setInterval(() => {
+    if (process.stdout.isTTY) {
+      const s = spinnerFrames[frame++ % spinnerFrames.length];
+      const elapsedSec = (Date.now() - startTime) / 1000;
+      const formattedTime = formatDuration(elapsedSec);
+      const cols = process.stdout.columns || 80;
+      const filesStr = currentFileCount > 0 ? `(${formatNumber(currentFileCount)} plik.) ` : '';
+      const prefix = `${s} [dclear] ${filesStr}`;
+      const suffix = ` (${formattedTime})`;
+      const maxPathLen = cols - prefix.length - suffix.length - 5;
+
+      let displayPath = currentPath;
+      if (displayPath.length > maxPathLen && maxPathLen > 10) {
+        displayPath = '...' + displayPath.slice(displayPath.length - maxPathLen + 3);
+      }
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] \x1b[90m${filesStr}\x1b[0m\x1b[33m${displayPath}\x1b[0m \x1b[90m(${formattedTime})\x1b[0m`);
+    }
+  }, 80);
+
+  const matchedFolders = await findMatchingFolders(absoluteDir, query, (p, count) => {
+    currentPath = p;
+    currentFileCount = count;
+  });
+
+  clearInterval(spinner);
+  if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
+
+  const durationSec = (Date.now() - startTime) / 1000;
+  const formattedDuration = formatDuration(durationSec);
+
+  if (matchedFolders.length === 0) {
+    console.log(`\n✅ Nie znaleziono żadnych folderów pasujących do "${query}".`);
+    return;
+  }
+
+  let totalSize = 0;
+  console.log(`\n📂 Znaleziono ${matchedFolders.length} folderów pasujących do "\x1b[1m${query}\x1b[0m" (${formattedDuration}):\n`);
+  console.log(`   ${'#'.padEnd(4)} ${'Rozmiar'.padEnd(14)} Ścieżka`);
+  console.log('   ' + '─'.repeat(60));
+
+  for (let i = 0; i < matchedFolders.length; i++) {
+    const folder = matchedFolders[i];
+    totalSize += folder.size;
+    const formatted = formatBytes(folder.size);
+    const coloredSize = colorizeSize(folder.size, formatted.padEnd(12));
+    const rank = `${i + 1}.`.padEnd(4);
+    console.log(`   ${rank} ${coloredSize}  \x1b[34m[DIR]\x1b[0m  ${folder.path}`);
+  }
+
+  console.log(`\n   💾 Łączny rozmiar: \x1b[31;1m${formatBytes(totalSize)}\x1b[0m`);
+  console.log('   💡 Aby usunąć wybrane: \x1b[1mdclear rm <ścieżka>\x1b[0m\n');
 }
 
 async function handleCleanNm(targetDir: string, autoRemove: boolean = false) {
@@ -259,21 +327,22 @@ async function handleRemove(targetPaths: string[]) {
 function showHelp() {
   console.log(`
 \x1b[1m🧹 dclear (Disk Clear) v${VERSION}\x1b[0m
-Szybki menedżer dysku w Node.js — skanuj, analizuj duplikaty, czyść!
+Szybki menedżer dysku w Node.js — skanuj, szukaj folderów, analizuj duplikaty!
 
 \x1b[1mUżycie:\x1b[0m
   dclear <command> [options]
 
 \x1b[1mDostępne komendy:\x1b[0m
-  scan [path]           Skanuje katalog i pokazuje TOP najcięższych plików/folderów
-  scan [path] --fast    Super-szybkie skanowanie bez zagłębiania się w node_modules (-s, --fast)
-  clean-nm [path]       Wyszukuje wszystkie foldery node_modules
-  clean-nm [path] --auto Automatycznie usuwa wszystkie znalezione foldery node_modules
-  dup, duplicates [path] Wyszukuje zduplikowane pliki (>1MB) i wylicza marnowane miejsce
-  info [path]           Pokazuje całkowity i wolny rozmiar dysku dla danej ścieżki
-  rm <path...>          Usuwa wskazane pliki lub foldery z dysku
-  -v, --version         Wyświetla wersję dclear
-  -h, --help            Wyświetla tę pomoc
+  scan [path]                 Skanuje katalog i pokazuje TOP najcięższych plików/folderów
+  scan [path] -s, --fast      Super-szybkie skanowanie bez zagłębiania się w node_modules
+  find, find-dir <query> [p]  Wyszukuje wszystkie foldery pasujące do nazwy/frazy <query> i wylicza ich wagę
+  clean-nm [path]             Wyszukuje wszystkie foldery node_modules
+  clean-nm [path] --auto      Automatycznie usuwa wszystkie znalezione foldery node_modules
+  dup, duplicates [path]      Wyszukuje zduplikowane pliki (>1MB) i wylicza marnowane miejsce
+  info [path]                 Pokazuje całkowity i wolny rozmiar dysku dla danej ścieżki
+  rm <path...>                Usuwa wskazane pliki lub foldery z dysku
+  -v, --version               Wyświetla wersję dclear
+  -h, --help                  Wyświetla tę pomoc
 `);
 }
 
@@ -288,6 +357,13 @@ export async function main() {
         const fast = args.includes('--fast') || args.includes('-s') || args.includes('--skip-nm');
         const scanPath = args.find(a => !a.startsWith('-') && a !== 'scan') || cwd;
         await handleScan(scanPath, fast);
+        break;
+      case 'find':
+      case 'find-dir':
+      case 'search':
+        const query = args[1];
+        const searchPath = args[2] || cwd;
+        await handleFindFolder(query, searchPath);
         break;
       case 'clean-nm':
         const auto = args.includes('--auto') || args.includes('-a');

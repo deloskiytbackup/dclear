@@ -46,7 +46,11 @@ dclear scan
 # Scan a specific directory
 dclear scan C:\Users\myuser\Projects
 
-# Find all node_modules folders recursively
+# 2. Search for any folder by name across directory tree and calculate disk size
+dclear find starmusic
+dclear find-dir node_modules C:\Users\shaza\Desktop
+
+# 3. Clean up all node_modules folders recursively
 dclear clean-nm C:\Users\myuser
 
 # Automatically delete all discovered node_modules

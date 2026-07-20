@@ -19,6 +19,7 @@
 - 🎨 **Kolorowy Output**: Koloryfikacja ANSI rozmiarów (czerwony = GB, żółty = 100MB+, cyjan = 10MB+, zielony = małe pliki).
 - 🔄 **Animowany Spinner**: Spinner z przelicznikiem sekund w czasie rzeczywistym.
 - 📦 **Detektor node_modules**: Rekurencyjne wyszukiwanie wszystkich folderów `node_modules` w Twoich projektach.
+- 🔍 **Wyszukiwanie folderów**: Wyszukiwanie folderów po nazwie w drzewie katalogów i wyliczanie ich wagi.
 - 🗑️ **Bezpieczne Usuwanie**: Usuwaj ciężkie pliki i foldery bezpośrednio z wiersza poleceń.
 
 ---

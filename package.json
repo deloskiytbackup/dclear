@@ -1,6 +1,6 @@
 {
   "name": "dclear",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Disk Clear CLI - Fast disk usage analyzer and cleaner in Node.js",
   "type": "module",
   "bin": {
