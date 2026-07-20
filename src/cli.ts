@@ -15,14 +15,16 @@ async function handleScan(targetDir: string, limit: number = 20) {
   const spinner = setInterval(() => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Skanowanie ${absoluteDir} ...`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Skanowanie ${absoluteDir} ... \x1b[90m(${elapsed}s)\x1b[0m`);
     }
   }, 80);
 
   const items = await scanDirectory(absoluteDir, (name) => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Analizuję: ${name.slice(0, 40)}`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Analizuję: ${name.slice(0, 35)} \x1b[90m(${elapsed}s)\x1b[0m`);
     }
   });
 
@@ -67,14 +69,16 @@ async function handleCleanNm(targetDir: string) {
   const spinner = setInterval(() => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Szukam folderów node_modules ...`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Szukam folderów node_modules ... \x1b[90m(${elapsed}s)\x1b[0m`);
     }
   }, 80);
 
   const nmFolders = await findNodeModulesFolders(absoluteDir, [], (p) => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Znaleziono: ${p.slice(0, 50)}`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Znaleziono: ${p.slice(0, 45)} \x1b[90m(${elapsed}s)\x1b[0m`);
     }
   });
 
