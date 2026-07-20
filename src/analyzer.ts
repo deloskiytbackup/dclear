@@ -15,12 +15,12 @@ export interface DuplicateGroup {
   files: string[];
 }
 
-// Ograniczenie współbieżności dla operacji I/O
+// Zwiększona pula dla maksymalnej przepustowości na dyskach SSD (128 równoległych wątków I/O)
 class ConcurrencyPool {
   private active = 0;
   private queue: (() => void)[] = [];
 
-  constructor(private limit: number = 64) {}
+  constructor(private limit: number = 128) {}
 
   async run<T>(fn: () => Promise<T>): Promise<T> {
     if (this.active >= this.limit) {
@@ -39,60 +39,89 @@ class ConcurrencyPool {
   }
 }
 
-const pool = new ConcurrencyPool(64);
+const pool = new ConcurrencyPool(128);
 
-// Szybki rozmiar folderu - z ograniczeniem współbieżności i wykrywaniem junction pointów
-async function fastDirSize(dirPath: string, onProgress?: (fullPath: string, totalFiles: { count: number }) => void, fileCounter: { count: number } = { count: 0 }): Promise<number> {
-  const visitedPaths = new Set<string>();
+// Iteracyjny, ultra-szybki skaner rozmiaru folderu bez zbędnego narzutu pamięci V8
+async function fastDirSize(
+  dirPath: string,
+  onProgress?: (fullPath: string, totalFiles: { count: number }) => void,
+  fileCounter: { count: number } = { count: 0 }
+): Promise<number> {
+  let totalSize = 0;
+  const dirQueue: string[] = [dirPath];
+  const visited = new Set<string>();
 
-  const processDir = async (currentPath: string): Promise<number> => {
-    if (visitedPaths.has(currentPath)) return 0;
-    visitedPaths.add(currentPath);
+  // Równolegle przetwarzane katalogi
+  const processNextDir = async (): Promise<number> => {
+    let localSize = 0;
 
-    let entries: fs.Dirent[];
-    try {
-      entries = await pool.run(() => fs.promises.readdir(currentPath, { withFileTypes: true }));
-    } catch {
-      return 0;
-    }
+    while (dirQueue.length > 0) {
+      const currentDir = dirQueue.pop();
+      if (!currentDir || visited.has(currentDir)) continue;
+      visited.add(currentDir);
 
-    let dirSize = 0;
-    const subTasks: Promise<number>[] = [];
+      let entries: fs.Dirent[];
+      try {
+        entries = await pool.run(() => fs.promises.readdir(currentDir, { withFileTypes: true }));
+      } catch {
+        continue;
+      }
 
-    for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
-      const fullPath = path.join(currentPath, entry.name);
+      const fileTasks: Promise<number>[] = [];
 
-      if (entry.isDirectory()) {
-        // Ignorowanie junction pointów i znanych zacięć
-        if (entry.name === '$RECYCLE.BIN' || entry.name === 'System Volume Information') continue;
-        subTasks.push(processDir(fullPath));
-      } else {
-        fileCounter.count++;
-        if (onProgress && fileCounter.count % 100 === 0) {
-          onProgress(fullPath, fileCounter);
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (entry.isSymbolicLink()) continue;
+
+        const fullPath = path.join(currentDir, entry.name);
+
+        if (entry.isDirectory()) {
+          if (entry.name !== '$RECYCLE.BIN' && entry.name !== 'System Volume Information') {
+            dirQueue.push(fullPath);
+          }
+        } else {
+          fileCounter.count++;
+          if (onProgress && fileCounter.count % 500 === 0) {
+            onProgress(fullPath, fileCounter);
+          }
+
+          fileTasks.push(
+            pool.run(async () => {
+              try {
+                const stat = await fs.promises.lstat(fullPath);
+                return stat.isSymbolicLink() ? 0 : stat.size;
+              } catch {
+                return 0;
+              }
+            })
+          );
         }
+      }
 
-        subTasks.push(
-          pool.run(async () => {
-            try {
-              const stat = await fs.promises.lstat(fullPath);
-              if (stat.isSymbolicLink()) return 0;
-              return stat.size;
-            } catch {
-              return 0;
-            }
-          })
-        );
+      if (fileTasks.length > 0) {
+        const sizes = await Promise.all(fileTasks);
+        for (let j = 0; j < sizes.length; j++) {
+          localSize += sizes[j];
+        }
       }
     }
 
-    const sizes = await Promise.all(subTasks);
-    for (const s of sizes) dirSize += s;
-    return dirSize;
+    return localSize;
   };
 
-  return processDir(dirPath);
+  // Uruchomienie 16 równoległych workerów pobierających katalogi z kolejki
+  const workerCount = 16;
+  const workers: Promise<number>[] = [];
+  for (let w = 0; w < workerCount; w++) {
+    workers.push(processNextDir());
+  }
+
+  const results = await Promise.all(workers);
+  for (let r = 0; r < results.length; r++) {
+    totalSize += results[r];
+  }
+
+  return totalSize;
 }
 
 export async function scanDirectory(
@@ -161,7 +190,7 @@ export async function findNodeModulesFolders(
         })
       );
     } else if (entry.name !== '.git' && entry.name !== '.dpn' && entry.name !== 'dist' && entry.name !== '$RECYCLE.BIN') {
-      tasks.push(findNodeModulesFolders(rootDir, found, onProgress).then(() => {}));
+      tasks.push(findNodeModulesFolders(fullPath, found, onProgress).then(() => {}));
     }
   }
 
@@ -169,7 +198,6 @@ export async function findNodeModulesFolders(
   return found.sort((a, b) => b.size - a.size);
 }
 
-// Szukanie duplikatów plików
 export async function findDuplicates(
   rootDir: string,
   minSizeMB: number = 1,
@@ -199,7 +227,7 @@ export async function findDuplicates(
         }
       } else {
         fileCount++;
-        if (onProgress && fileCount % 50 === 0) onProgress(fullPath, fileCount);
+        if (onProgress && fileCount % 100 === 0) onProgress(fullPath, fileCount);
 
         tasks.push(
           pool.run(async () => {
