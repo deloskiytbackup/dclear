@@ -32,3 +32,12 @@ export function colorizeSize(bytes: number, formattedStr: string): string {
     return `${green}${formattedStr}${reset}`;
   }
 }
+
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}m ${secs}s`;
+}

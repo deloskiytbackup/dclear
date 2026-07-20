@@ -1,10 +1,10 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { scanDirectory, findNodeModulesFolders, findDuplicates } from './analyzer.js';
-import { formatBytes, colorizeSize } from './formatter.js';
+import { formatBytes, colorizeSize, formatDuration } from './formatter.js';
 import { removeTarget } from './cleaner.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 
 async function handleScan(targetDir: string, limit: number = 20) {
   const absoluteDir = path.resolve(targetDir);
@@ -12,36 +12,38 @@ async function handleScan(targetDir: string, limit: number = 20) {
 
   const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let frame = 0;
+  let currentPath = absoluteDir;
+  let currentFileCount = 0;
 
   const spinner = setInterval(() => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Skanowanie ${absoluteDir} ... \x1b[90m(${elapsed}s)\x1b[0m`);
+      const elapsedSec = (Date.now() - startTime) / 1000;
+      const formattedTime = formatDuration(elapsedSec);
+      const cols = process.stdout.columns || 80;
+      const filesStr = currentFileCount > 0 ? `(${currentFileCount} plik.) ` : '';
+      const prefix = `${s} [dclear] ${filesStr}`;
+      const suffix = ` (${formattedTime})`;
+      const maxPathLen = cols - prefix.length - suffix.length - 5;
+      
+      let displayPath = currentPath;
+      if (displayPath.length > maxPathLen && maxPathLen > 10) {
+        displayPath = '...' + displayPath.slice(displayPath.length - maxPathLen + 3);
+      }
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] \x1b[90m${filesStr}\x1b[0m\x1b[33m${displayPath}\x1b[0m \x1b[90m(${formattedTime})\x1b[0m`);
     }
   }, 80);
 
   const items = await scanDirectory(absoluteDir, (fullPath, fileCount) => {
-    if (process.stdout.isTTY) {
-      const s = spinnerFrames[frame++ % spinnerFrames.length];
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      const cols = process.stdout.columns || 80;
-      const filesStr = fileCount ? `(${fileCount} plik.) ` : '';
-      const prefix = `${s} [dclear] ${filesStr}`;
-      const suffix = ` (${elapsed}s)`;
-      const maxPathLen = cols - prefix.length - suffix.length - 5;
-      let displayPath = fullPath;
-      if (displayPath.length > maxPathLen && maxPathLen > 10) {
-        displayPath = '...' + displayPath.slice(displayPath.length - maxPathLen + 3);
-      }
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] \x1b[90m${filesStr}\x1b[0m\x1b[33m${displayPath}\x1b[0m \x1b[90m(${elapsed}s)\x1b[0m`);
-    }
+    currentPath = fullPath;
+    currentFileCount = fileCount;
   });
 
   clearInterval(spinner);
   if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  const durationSec = (Date.now() - startTime) / 1000;
+  const formattedDuration = formatDuration(durationSec);
   const topItems = items.slice(0, limit);
 
   if (topItems.length === 0) {
@@ -51,7 +53,7 @@ async function handleScan(targetDir: string, limit: number = 20) {
 
   const totalSize = items.reduce((sum, i) => sum + i.size, 0);
 
-  console.log(`\n🔍 Wyniki skanowania: \x1b[1m${absoluteDir}\x1b[0m (${duration}s)\n`);
+  console.log(`\n🔍 Wyniki skanowania: \x1b[1m${absoluteDir}\x1b[0m (${formattedDuration})\n`);
   console.log(`   💾 Łączny rozmiar: \x1b[1m${formatBytes(totalSize)}\x1b[0m | Elementów: ${items.length}\n`);
   console.log(`   ${'#'.padEnd(4)} ${'Rozmiar'.padEnd(14)} ${'Typ'.padEnd(8)} Nazwa`);
   console.log('   ' + '─'.repeat(60));
@@ -76,27 +78,38 @@ async function handleCleanNm(targetDir: string, autoRemove: boolean = false) {
 
   const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let frame = 0;
+  let currentPath = absoluteDir;
+  let currentFileCount = 0;
 
   const spinner = setInterval(() => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Szukam folderów node_modules ... \x1b[90m(${elapsed}s)\x1b[0m`);
+      const elapsedSec = (Date.now() - startTime) / 1000;
+      const formattedTime = formatDuration(elapsedSec);
+      const cols = process.stdout.columns || 80;
+      const filesStr = currentFileCount > 0 ? `(${currentFileCount} plik.) ` : '';
+      const prefix = `${s} [dclear] ${filesStr}`;
+      const suffix = ` (${formattedTime})`;
+      const maxPathLen = cols - prefix.length - suffix.length - 5;
+
+      let displayPath = currentPath;
+      if (displayPath.length > maxPathLen && maxPathLen > 10) {
+        displayPath = '...' + displayPath.slice(displayPath.length - maxPathLen + 3);
+      }
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] \x1b[90m${filesStr}\x1b[0m\x1b[33m${displayPath}\x1b[0m \x1b[90m(${formattedTime})\x1b[0m`);
     }
   }, 80);
 
-  const nmFolders = await findNodeModulesFolders(absoluteDir, [], (p) => {
-    if (process.stdout.isTTY) {
-      const s = spinnerFrames[frame++ % spinnerFrames.length];
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Znaleziono: ${p.slice(0, 45)} \x1b[90m(${elapsed}s)\x1b[0m`);
-    }
+  const nmFolders = await findNodeModulesFolders(absoluteDir, [], (p, count) => {
+    currentPath = p;
+    currentFileCount = count;
   });
 
   clearInterval(spinner);
   if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  const durationSec = (Date.now() - startTime) / 1000;
+  const formattedDuration = formatDuration(durationSec);
 
   if (nmFolders.length === 0) {
     console.log('\n✅ Nie znaleziono żadnych folderów node_modules.');
@@ -104,7 +117,7 @@ async function handleCleanNm(targetDir: string, autoRemove: boolean = false) {
   }
 
   let totalSize = 0;
-  console.log(`\n📦 Znaleziono ${nmFolders.length} folderów node_modules (${duration}s):\n`);
+  console.log(`\n📦 Znaleziono ${nmFolders.length} folderów node_modules (${formattedDuration}):\n`);
 
   for (const nm of nmFolders) {
     totalSize += nm.size;
@@ -134,27 +147,38 @@ async function handleDuplicates(targetDir: string, minSizeMB: number = 1) {
 
   const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let frame = 0;
+  let currentPath = absoluteDir;
+  let currentFileCount = 0;
 
   const spinner = setInterval(() => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Szukam duplikatów plikowych (>${minSizeMB}MB) ... \x1b[90m(${elapsed}s)\x1b[0m`);
+      const elapsedSec = (Date.now() - startTime) / 1000;
+      const formattedTime = formatDuration(elapsedSec);
+      const cols = process.stdout.columns || 80;
+      const filesStr = currentFileCount > 0 ? `(${currentFileCount} plik.) ` : '';
+      const prefix = `${s} [dclear] ${filesStr}`;
+      const suffix = ` (${formattedTime})`;
+      const maxPathLen = cols - prefix.length - suffix.length - 5;
+
+      let displayPath = currentPath;
+      if (displayPath.length > maxPathLen && maxPathLen > 10) {
+        displayPath = '...' + displayPath.slice(displayPath.length - maxPathLen + 3);
+      }
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] \x1b[90m${filesStr}\x1b[0m\x1b[33m${displayPath}\x1b[0m \x1b[90m(${formattedTime})\x1b[0m`);
     }
   }, 80);
 
-  const duplicates = await findDuplicates(absoluteDir, minSizeMB, (p) => {
-    if (process.stdout.isTTY) {
-      const s = spinnerFrames[frame++ % spinnerFrames.length];
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Analizuję: ${p.slice(0, 40)} \x1b[90m(${elapsed}s)\x1b[0m`);
-    }
+  const duplicates = await findDuplicates(absoluteDir, minSizeMB, (p, count) => {
+    currentPath = p;
+    currentFileCount = count;
   });
 
   clearInterval(spinner);
   if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
 
-  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+  const durationSec = (Date.now() - startTime) / 1000;
+  const formattedDuration = formatDuration(durationSec);
 
   if (duplicates.length === 0) {
     console.log(`\n✅ Nie znaleziono duplikatów plików większych niż ${minSizeMB} MB.`);
@@ -162,7 +186,7 @@ async function handleDuplicates(targetDir: string, minSizeMB: number = 1) {
   }
 
   let totalWasted = 0;
-  console.log(`\n👯 Znaleziono ${duplicates.length} grup duplikatów (${duration}s):\n`);
+  console.log(`\n👯 Znaleziono ${duplicates.length} grup duplikatów (${formattedDuration}):\n`);
 
   for (let i = 0; i < duplicates.length; i++) {
     const group = duplicates[i];
