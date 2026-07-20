@@ -15,58 +15,115 @@ export interface DuplicateGroup {
   files: string[];
 }
 
-// Szybki rozmiar folderu - równoległy skan
-async function fastDirSize(dirPath: string): Promise<number> {
+// Ograniczenie współbieżności dla operacji I/O
+class ConcurrencyPool {
+  private active = 0;
+  private queue: (() => void)[] = [];
+
+  constructor(private limit: number = 64) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.limit) {
+      await new Promise<void>(resolve => this.queue.push(resolve));
+    }
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      if (this.queue.length > 0) {
+        const next = this.queue.shift();
+        if (next) next();
+      }
+    }
+  }
+}
+
+const pool = new ConcurrencyPool(64);
+
+// Szybki rozmiar folderu - z ograniczeniem współbieżności i wykrywaniem junction pointów
+async function fastDirSize(dirPath: string, onProgress?: (fullPath: string, totalFiles: { count: number }) => void, fileCounter: { count: number } = { count: 0 }): Promise<number> {
+  const visitedPaths = new Set<string>();
+
   const processDir = async (currentPath: string): Promise<number> => {
+    if (visitedPaths.has(currentPath)) return 0;
+    visitedPaths.add(currentPath);
+
     let entries: fs.Dirent[];
     try {
-      entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+      entries = await pool.run(() => fs.promises.readdir(currentPath, { withFileTypes: true }));
     } catch {
       return 0;
     }
 
-    const tasks: Promise<number>[] = [];
+    let dirSize = 0;
+    const subTasks: Promise<number>[] = [];
 
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
       const fullPath = path.join(currentPath, entry.name);
 
       if (entry.isDirectory()) {
-        tasks.push(processDir(fullPath));
+        // Ignorowanie junction pointów i znanych zacięć
+        if (entry.name === '$RECYCLE.BIN' || entry.name === 'System Volume Information') continue;
+        subTasks.push(processDir(fullPath));
       } else {
-        tasks.push(
-          fs.promises.lstat(fullPath)
-            .then(s => s.size)
-            .catch(() => 0)
+        fileCounter.count++;
+        if (onProgress && fileCounter.count % 100 === 0) {
+          onProgress(fullPath, fileCounter);
+        }
+
+        subTasks.push(
+          pool.run(async () => {
+            try {
+              const stat = await fs.promises.lstat(fullPath);
+              if (stat.isSymbolicLink()) return 0;
+              return stat.size;
+            } catch {
+              return 0;
+            }
+          })
         );
       }
     }
 
-    const results = await Promise.all(tasks);
-    let size = 0;
-    for (const r of results) size += r;
-    return size;
+    const sizes = await Promise.all(subTasks);
+    for (const s of sizes) dirSize += s;
+    return dirSize;
   };
 
   return processDir(dirPath);
 }
 
-export async function scanDirectory(targetDir: string, onProgress?: (fullPath: string) => void): Promise<DiskItem[]> {
-  const entries = await fs.promises.readdir(targetDir, { withFileTypes: true }).catch(() => []);
+export async function scanDirectory(
+  targetDir: string,
+  onProgress?: (fullPath: string, fileCount: number) => void
+): Promise<DiskItem[]> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(targetDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const fileCounter = { count: 0 };
 
   const tasks = entries.map(async (entry): Promise<DiskItem> => {
     const fullPath = path.join(targetDir, entry.name);
 
-    if (onProgress) onProgress(fullPath);
+    if (onProgress) onProgress(fullPath, fileCounter.count);
 
     if (entry.isSymbolicLink()) {
       return { path: fullPath, name: entry.name, size: 0, isDir: false };
     }
 
     if (entry.isDirectory()) {
-      const size = await fastDirSize(fullPath);
+      const size = await fastDirSize(fullPath, (curPath, counter) => {
+        if (onProgress) onProgress(curPath, counter.count);
+      }, fileCounter);
       return { path: fullPath, name: entry.name, size, isDir: true };
     } else {
+      fileCounter.count++;
       const stat = await fs.promises.lstat(fullPath).catch(() => null);
       return { path: fullPath, name: entry.name, size: stat?.size ?? 0, isDir: false };
     }
@@ -76,7 +133,11 @@ export async function scanDirectory(targetDir: string, onProgress?: (fullPath: s
   return items.sort((a, b) => b.size - a.size);
 }
 
-export async function findNodeModulesFolders(rootDir: string, found: DiskItem[] = [], onProgress?: (path: string) => void): Promise<DiskItem[]> {
+export async function findNodeModulesFolders(
+  rootDir: string,
+  found: DiskItem[] = [],
+  onProgress?: (path: string, fileCount: number) => void
+): Promise<DiskItem[]> {
   let entries: fs.Dirent[];
   try {
     entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
@@ -85,6 +146,7 @@ export async function findNodeModulesFolders(rootDir: string, found: DiskItem[] 
   }
 
   const tasks: Promise<void>[] = [];
+  const fileCounter = { count: 0 };
 
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
@@ -92,13 +154,14 @@ export async function findNodeModulesFolders(rootDir: string, found: DiskItem[] 
 
     if (entry.name === 'node_modules') {
       tasks.push(
-        fastDirSize(fullPath).then(size => {
-          if (onProgress) onProgress(fullPath);
+        fastDirSize(fullPath, (p, counter) => {
+          if (onProgress) onProgress(p, counter.count);
+        }, fileCounter).then(size => {
           found.push({ path: fullPath, name: fullPath, size, isDir: true });
         })
       );
-    } else if (entry.name !== '.git' && entry.name !== '.dpn' && entry.name !== 'dist') {
-      tasks.push(findNodeModulesFolders(fullPath, found, onProgress).then(() => {}));
+    } else if (entry.name !== '.git' && entry.name !== '.dpn' && entry.name !== 'dist' && entry.name !== '$RECYCLE.BIN') {
+      tasks.push(findNodeModulesFolders(rootDir, found, onProgress).then(() => {}));
     }
   }
 
@@ -106,20 +169,20 @@ export async function findNodeModulesFolders(rootDir: string, found: DiskItem[] 
   return found.sort((a, b) => b.size - a.size);
 }
 
-// Szukanie duplikatów plików (po rozmiarze + hash pierwszych 4KB)
+// Szukanie duplikatów plików
 export async function findDuplicates(
   rootDir: string,
   minSizeMB: number = 1,
-  onProgress?: (path: string) => void
+  onProgress?: (path: string, count: number) => void
 ): Promise<DuplicateGroup[]> {
   const minBytes = minSizeMB * 1024 * 1024;
   const sizeMap = new Map<number, string[]>();
+  let fileCount = 0;
 
-  // Faza 1: Zbierz pliki pogrupowane po rozmiarze
   const collectFiles = async (dir: string): Promise<void> => {
     let entries: fs.Dirent[];
     try {
-      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      entries = await pool.run(() => fs.promises.readdir(dir, { withFileTypes: true }));
     } catch {
       return;
     }
@@ -131,22 +194,27 @@ export async function findDuplicates(
       const fullPath = path.join(dir, entry.name);
 
       if (entry.isDirectory()) {
-        if (entry.name !== 'node_modules' && entry.name !== '.git') {
+        if (entry.name !== 'node_modules' && entry.name !== '.git' && entry.name !== '$RECYCLE.BIN') {
           tasks.push(collectFiles(fullPath));
         }
       } else {
+        fileCount++;
+        if (onProgress && fileCount % 50 === 0) onProgress(fullPath, fileCount);
+
         tasks.push(
-          fs.promises.lstat(fullPath).then(stat => {
-            if (stat.size >= minBytes) {
-              if (onProgress) onProgress(fullPath);
-              const existing = sizeMap.get(stat.size);
-              if (existing) {
-                existing.push(fullPath);
-              } else {
-                sizeMap.set(stat.size, [fullPath]);
+          pool.run(async () => {
+            try {
+              const stat = await fs.promises.lstat(fullPath);
+              if (stat.size >= minBytes && !stat.isSymbolicLink()) {
+                const existing = sizeMap.get(stat.size);
+                if (existing) {
+                  existing.push(fullPath);
+                } else {
+                  sizeMap.set(stat.size, [fullPath]);
+                }
               }
-            }
-          }).catch(() => {})
+            } catch {}
+          })
         );
       }
     }
@@ -156,7 +224,6 @@ export async function findDuplicates(
 
   await collectFiles(rootDir);
 
-  // Faza 2: Dla plików o tym samym rozmiarze, porównaj hash
   const duplicates: DuplicateGroup[] = [];
 
   for (const [size, files] of sizeMap) {
@@ -166,17 +233,19 @@ export async function findDuplicates(
 
     const hashTasks = files.map(async (file) => {
       try {
-        const handle = await fs.promises.open(file, 'r');
-        const buf = Buffer.alloc(4096);
-        await handle.read(buf, 0, 4096, 0);
-        await handle.close();
-        const hash = crypto.createHash('md5').update(buf).digest('hex');
-        const existing = hashMap.get(hash);
-        if (existing) {
-          existing.push(file);
-        } else {
-          hashMap.set(hash, [file]);
-        }
+        await pool.run(async () => {
+          const handle = await fs.promises.open(file, 'r');
+          const buf = Buffer.alloc(4096);
+          await handle.read(buf, 0, 4096, 0);
+          await handle.close();
+          const hash = crypto.createHash('md5').update(buf).digest('hex');
+          const existing = hashMap.get(hash);
+          if (existing) {
+            existing.push(file);
+          } else {
+            hashMap.set(hash, [file]);
+          }
+        });
       } catch {}
     });
 

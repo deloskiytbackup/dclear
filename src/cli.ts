@@ -21,19 +21,20 @@ async function handleScan(targetDir: string, limit: number = 20) {
     }
   }, 80);
 
-  const items = await scanDirectory(absoluteDir, (fullPath) => {
+  const items = await scanDirectory(absoluteDir, (fullPath, fileCount) => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const cols = process.stdout.columns || 80;
-      const prefix = `${s} [dclear] Analizuję: `;
+      const filesStr = fileCount ? `(${fileCount} plik.) ` : '';
+      const prefix = `${s} [dclear] ${filesStr}`;
       const suffix = ` (${elapsed}s)`;
       const maxPathLen = cols - prefix.length - suffix.length - 5;
       let displayPath = fullPath;
       if (displayPath.length > maxPathLen && maxPathLen > 10) {
         displayPath = '...' + displayPath.slice(displayPath.length - maxPathLen + 3);
       }
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Analizuję: \x1b[33m${displayPath}\x1b[0m \x1b[90m(${elapsed}s)\x1b[0m`);
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] \x1b[90m${filesStr}\x1b[0m\x1b[33m${displayPath}\x1b[0m \x1b[90m(${elapsed}s)\x1b[0m`);
     }
   });
 
