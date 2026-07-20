@@ -12,9 +12,12 @@
 
 ## ✨ Kluczowe Cechy
 
-- ⚡ **Równoległy Skan**: W pełni współbieżna analiza katalogów (`Promise.all`) — skanowanie 6+ GB w niecałe 18 sekund.
+- 👯 **Wykrywanie Duplikatów**: Wyszukuj zduplikowane pliki (>1MB) za pomocą hashowania MD5 i wyliczaj oszczędność miejsca.
+- 📊 **Informacje o Dysku**: Sprawdzaj całkowity i wolny rozmiar partycji dyskowej.
+- 🤖 **Automatyczne Czyszczenie node_modules**: Użyj `--auto` aby usunąć wszystkie znalezione foldery `node_modules` jednym poleceniem.
+- ⚡ **Równoległy Skan**: W fully współbieżna analiza katalogów (`Promise.all`) — skanowanie 6+ GB w niecałe 18 sekund.
 - 🎨 **Kolorowy Output**: Koloryfikacja ANSI rozmiarów (czerwony = GB, żółty = 100MB+, cyjan = 10MB+, zielony = małe pliki).
-- 🔄 **Animowany Spinner**: Spinner w czasie rzeczywistym podczas skanowania.
+- 🔄 **Animowany Spinner**: Spinner z przelicznikiem sekund w czasie rzeczywistym.
 - 📦 **Detektor node_modules**: Rekurencyjne wyszukiwanie wszystkich folderów `node_modules` w Twoich projektach.
 - 🗑️ **Bezpieczne Usuwanie**: Usuwaj ciężkie pliki i foldery bezpośrednio z wiersza poleceń.
 
@@ -45,6 +48,15 @@ dclear scan C:\Users\mojeKonto\Projekty
 
 # Znajdź wszystkie foldery node_modules
 dclear clean-nm C:\Users\mojeKonto
+
+# Automatycznie usuń wszystkie znalezione foldery node_modules
+dclear clean-nm C:\Users\mojeKonto --auto
+
+# Znajdź zduplikowane pliki większe niż 1MB
+dclear dup C:\Users\mojeKonto\Projekty
+
+# Wyświetl statystyki partycji dysku
+dclear info C:\Users\mojeKonto
 
 # Usuń wybrane pliki lub foldery
 dclear rm ./ciężki-plik.apk ./stary-projekt/node_modules

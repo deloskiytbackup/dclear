@@ -12,9 +12,12 @@
 
 ## ✨ Key Features
 
+- 👯 **Duplicate Finder**: Identify duplicate files (>1MB) using MD5 hashing and compute potential space savings.
+- 📊 **Disk Info**: Query drive partition free and used capacity stats instantly.
+- 🤖 **Auto Clean node_modules**: Pass `--auto` to automatically clean all discovered `node_modules` folders.
 - ⚡ **Parallel Scanning**: Fully concurrent directory analysis using `Promise.all` — scans 6 GB+ directories in under 18 seconds.
 - 🎨 **Color-Coded Output**: ANSI-colored size display (red for GB, yellow for 100MB+, cyan for 10MB+, green for small files).
-- 🔄 **Animated Spinner**: Real-time animated spinner during scanning so you always know it's working.
+- 🔄 **Animated Spinner**: Real-time animated spinner with elapsed time counter.
 - 📦 **node_modules Hunter**: Recursively finds all `node_modules` folders across your projects for easy cleanup.
 - 🗑️ **Safe Deletion**: Remove heavy files and directories directly from the CLI.
 
@@ -45,6 +48,15 @@ dclear scan C:\Users\myuser\Projects
 
 # Find all node_modules folders recursively
 dclear clean-nm C:\Users\myuser
+
+# Automatically delete all discovered node_modules
+dclear clean-nm C:\Users\myuser --auto
+
+# Find duplicate files larger than 1MB and calculate wasted space
+dclear dup C:\Users\myuser\Projects
+
+# Show partition disk usage stats (total/used/free)
+dclear info C:\Users\myuser
 
 # Remove specific files or directories
 dclear rm ./heavy-file.apk ./old-project/node_modules

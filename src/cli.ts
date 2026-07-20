@@ -1,9 +1,10 @@
 import path from 'node:path';
-import { scanDirectory, findNodeModulesFolders } from './analyzer.js';
+import fs from 'node:fs';
+import { scanDirectory, findNodeModulesFolders, findDuplicates } from './analyzer.js';
 import { formatBytes, colorizeSize } from './formatter.js';
 import { removeTarget } from './cleaner.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 async function handleScan(targetDir: string, limit: number = 20) {
   const absoluteDir = path.resolve(targetDir);
@@ -20,11 +21,19 @@ async function handleScan(targetDir: string, limit: number = 20) {
     }
   }, 80);
 
-  const items = await scanDirectory(absoluteDir, (name) => {
+  const items = await scanDirectory(absoluteDir, (fullPath) => {
     if (process.stdout.isTTY) {
       const s = spinnerFrames[frame++ % spinnerFrames.length];
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Analizuję: ${name.slice(0, 35)} \x1b[90m(${elapsed}s)\x1b[0m`);
+      const cols = process.stdout.columns || 80;
+      const prefix = `${s} [dclear] Analizuję: `;
+      const suffix = ` (${elapsed}s)`;
+      const maxPathLen = cols - prefix.length - suffix.length - 5;
+      let displayPath = fullPath;
+      if (displayPath.length > maxPathLen && maxPathLen > 10) {
+        displayPath = '...' + displayPath.slice(displayPath.length - maxPathLen + 3);
+      }
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Analizuję: \x1b[33m${displayPath}\x1b[0m \x1b[90m(${elapsed}s)\x1b[0m`);
     }
   });
 
@@ -56,10 +65,11 @@ async function handleScan(targetDir: string, limit: number = 20) {
   }
 
   console.log('\n   💡 Aby usunąć: \x1b[1mdclear rm <ścieżka>\x1b[0m');
-  console.log(`   💡 Szukaj node_modules: \x1b[1mdclear clean-nm [ścieżka]\x1b[0m\n`);
+  console.log(`   💡 Szukaj node_modules: \x1b[1mdclear clean-nm [ścieżka]\x1b[0m`);
+  console.log(`   💡 Szukaj duplikatów: \x1b[1mdclear dup [ścieżka]\x1b[0m\n`);
 }
 
-async function handleCleanNm(targetDir: string) {
+async function handleCleanNm(targetDir: string, autoRemove: boolean = false) {
   const absoluteDir = path.resolve(targetDir);
   const startTime = Date.now();
 
@@ -102,7 +112,98 @@ async function handleCleanNm(targetDir: string) {
   }
 
   console.log(`\n   💾 Łączny rozmiar: \x1b[31;1m${formatBytes(totalSize)}\x1b[0m`);
-  console.log('   💡 Aby usunąć: \x1b[1mdclear rm <ścieżka>\x1b[0m\n');
+
+  if (autoRemove) {
+    console.log(`\n🚀 Rozpoczynam automatyczne usuwanie ${nmFolders.length} folderów node_modules...`);
+    for (const nm of nmFolders) {
+      process.stdout.write(`🗑️  Usuwanie ${nm.path} ... `);
+      await removeTarget(nm.path);
+      console.log(`\x1b[32mOK\x1b[0m`);
+    }
+    console.log(`\n✅ Pomyślnie usunięto wszystkie foldery node_modules! Odzyskano \x1b[32;1m${formatBytes(totalSize)}\x1b[0m.`);
+  } else {
+    console.log('   💡 Aby usunąć wybrane: \x1b[1mdclear rm <ścieżka>\x1b[0m');
+    console.log('   💡 Aby usunąć wszystkie automatycznie: \x1b[1mdclear clean-nm [ścieżka] --auto\x1b[0m\n');
+  }
+}
+
+async function handleDuplicates(targetDir: string, minSizeMB: number = 1) {
+  const absoluteDir = path.resolve(targetDir);
+  const startTime = Date.now();
+
+  const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let frame = 0;
+
+  const spinner = setInterval(() => {
+    if (process.stdout.isTTY) {
+      const s = spinnerFrames[frame++ % spinnerFrames.length];
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Szukam duplikatów plikowych (>${minSizeMB}MB) ... \x1b[90m(${elapsed}s)\x1b[0m`);
+    }
+  }, 80);
+
+  const duplicates = await findDuplicates(absoluteDir, minSizeMB, (p) => {
+    if (process.stdout.isTTY) {
+      const s = spinnerFrames[frame++ % spinnerFrames.length];
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      process.stdout.write(`\r\x1b[K\x1b[36m${s}\x1b[0m [dclear] Analizuję: ${p.slice(0, 40)} \x1b[90m(${elapsed}s)\x1b[0m`);
+    }
+  });
+
+  clearInterval(spinner);
+  if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
+
+  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+  if (duplicates.length === 0) {
+    console.log(`\n✅ Nie znaleziono duplikatów plików większych niż ${minSizeMB} MB.`);
+    return;
+  }
+
+  let totalWasted = 0;
+  console.log(`\n👯 Znaleziono ${duplicates.length} grup duplikatów (${duration}s):\n`);
+
+  for (let i = 0; i < duplicates.length; i++) {
+    const group = duplicates[i];
+    const wasted = group.size * (group.files.length - 1);
+    totalWasted += wasted;
+    const formattedSize = formatBytes(group.size);
+    const formattedWasted = formatBytes(wasted);
+
+    console.log(`   ${i + 1}. Rozmiar pliku: ${colorizeSize(group.size, formattedSize)} | Marnowane miejsce: \x1b[31;1m${formattedWasted}\x1b[0m (${group.files.length} kopie)`);
+    for (const f of group.files) {
+      console.log(`      └─ \x1b[90m${f}\x1b[0m`);
+    }
+    console.log('');
+  }
+
+  console.log(`   💾 Łączne potencjalnie oszczędzone miejsce: \x1b[32;1m${formatBytes(totalWasted)}\x1b[0m`);
+  console.log('   💡 Aby usunąć plik: \x1b[1mdclear rm <ścieżka>\x1b[0m\n');
+}
+
+async function handleInfo(targetDir: string) {
+  const absoluteDir = path.resolve(targetDir);
+
+  try {
+    const stat = await fs.promises.statfs(absoluteDir).catch(() => null);
+    if (stat) {
+      const total = stat.blocks * stat.bsize;
+      const free = stat.bfree * stat.bsize;
+      const available = stat.bavail * stat.bsize;
+      const used = total - free;
+      const usedPercent = ((used / total) * 100).toFixed(1);
+
+      console.log(`\n📊 Informacje o partycji dyskowej dla: \x1b[1m${absoluteDir}\x1b[0m\n`);
+      console.log(`   Całkowity rozmiar: \x1b[1m${formatBytes(total)}\x1b[0m`);
+      console.log(`   Zajęte miejsce:    \x1b[31;1m${formatBytes(used)}\x1b[0m (${usedPercent}%)`);
+      console.log(`   Wolne miejsce:     \x1b[32;1m${formatBytes(available)}\x1b[0m`);
+      console.log('');
+    } else {
+      console.log(`ℹ️ Katalog: ${absoluteDir}`);
+    }
+  } catch (err: any) {
+    console.error(`Nie udało się pobrać statystyk dysku: ${err.message}`);
+  }
 }
 
 async function handleRemove(targetPaths: string[]) {
@@ -122,17 +223,20 @@ async function handleRemove(targetPaths: string[]) {
 function showHelp() {
   console.log(`
 \x1b[1m🧹 dclear (Disk Clear) v${VERSION}\x1b[0m
-Szybki menedżer dysku w Node.js — skanuj, analizuj, czyść!
+Szybki menedżer dysku w Node.js — skanuj, analizuj duplikaty, czyść!
 
 \x1b[1mUżycie:\x1b[0m
   dclear <command> [options]
 
 \x1b[1mDostępne komendy:\x1b[0m
-  scan [path]        Skanuje katalog i pokazuje TOP najcięższych plików/folderów
-  clean-nm [path]    Wyszukuje wszystkie foldery node_modules
-  rm <path...>       Usuwa wskazane pliki lub foldery z dysku
-  -v, --version      Wyświetla wersję dclear
-  -h, --help         Wyświetla tę pomoc
+  scan [path]           Skanuje katalog i pokazuje TOP najcięższych plików/folderów
+  clean-nm [path]       Wyszukuje wszystkie foldery node_modules
+  clean-nm [path] --auto Automatycznie usuwa wszystkie znalezione foldery node_modules
+  dup, duplicates [path] Wyszukuje zduplikowane pliki (>1MB) i wylicza marnowane miejsce
+  info [path]           Pokazuje całkowity i wolny rozmiar dysku dla danej ścieżki
+  rm <path...>          Usuwa wskazane pliki lub foldery z dysku
+  -v, --version         Wyświetla wersję dclear
+  -h, --help            Wyświetla tę pomoc
 `);
 }
 
@@ -147,11 +251,20 @@ export async function main() {
         await handleScan(args[1] || cwd);
         break;
       case 'clean-nm':
-        await handleCleanNm(args[1] || cwd);
+        const auto = args.includes('--auto') || args.includes('-a');
+        const nmPath = args.find(a => !a.startsWith('-') && a !== 'clean-nm') || cwd;
+        await handleCleanNm(nmPath, auto);
+        break;
+      case 'dup':
+      case 'duplicates':
+        await handleDuplicates(args[1] || cwd);
+        break;
+      case 'info':
+        await handleInfo(args[1] || cwd);
         break;
       case 'rm':
       case 'remove':
-        await handleRemove(args.slice(1));
+        await handleRemove(args.filter(a => a !== 'rm' && a !== 'remove'));
         break;
       case '-v':
       case '--version':
