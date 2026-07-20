@@ -41,3 +41,13 @@ export function formatDuration(seconds: number): string {
   const secs = Math.floor(seconds % 60);
   return `${mins}m ${secs}s`;
 }
+
+export function formatNumber(num: number): string {
+  if (num >= 1_000_000) {
+    return `${parseFloat((num / 1_000_000).toFixed(1))}M`;
+  }
+  if (num >= 10_000) {
+    return `${parseFloat((num / 1_000).toFixed(1))}k`;
+  }
+  return num.toLocaleString('pl-PL');
+}

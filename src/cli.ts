@@ -1,10 +1,10 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { scanDirectory, findNodeModulesFolders, findDuplicates } from './analyzer.js';
-import { formatBytes, colorizeSize, formatDuration } from './formatter.js';
+import { formatBytes, colorizeSize, formatDuration, formatNumber } from './formatter.js';
 import { removeTarget } from './cleaner.js';
 
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 
 async function handleScan(targetDir: string, limit: number = 20) {
   const absoluteDir = path.resolve(targetDir);
@@ -21,7 +21,7 @@ async function handleScan(targetDir: string, limit: number = 20) {
       const elapsedSec = (Date.now() - startTime) / 1000;
       const formattedTime = formatDuration(elapsedSec);
       const cols = process.stdout.columns || 80;
-      const filesStr = currentFileCount > 0 ? `(${currentFileCount} plik.) ` : '';
+      const filesStr = currentFileCount > 0 ? `(${formatNumber(currentFileCount)} plik.) ` : '';
       const prefix = `${s} [dclear] ${filesStr}`;
       const suffix = ` (${formattedTime})`;
       const maxPathLen = cols - prefix.length - suffix.length - 5;
@@ -87,7 +87,7 @@ async function handleCleanNm(targetDir: string, autoRemove: boolean = false) {
       const elapsedSec = (Date.now() - startTime) / 1000;
       const formattedTime = formatDuration(elapsedSec);
       const cols = process.stdout.columns || 80;
-      const filesStr = currentFileCount > 0 ? `(${currentFileCount} plik.) ` : '';
+      const filesStr = currentFileCount > 0 ? `(${formatNumber(currentFileCount)} plik.) ` : '';
       const prefix = `${s} [dclear] ${filesStr}`;
       const suffix = ` (${formattedTime})`;
       const maxPathLen = cols - prefix.length - suffix.length - 5;
@@ -156,7 +156,7 @@ async function handleDuplicates(targetDir: string, minSizeMB: number = 1) {
       const elapsedSec = (Date.now() - startTime) / 1000;
       const formattedTime = formatDuration(elapsedSec);
       const cols = process.stdout.columns || 80;
-      const filesStr = currentFileCount > 0 ? `(${currentFileCount} plik.) ` : '';
+      const filesStr = currentFileCount > 0 ? `(${formatNumber(currentFileCount)} plik.) ` : '';
       const prefix = `${s} [dclear] ${filesStr}`;
       const suffix = ` (${formattedTime})`;
       const maxPathLen = cols - prefix.length - suffix.length - 5;
